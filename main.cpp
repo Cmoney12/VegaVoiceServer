@@ -149,10 +149,10 @@ private:
                                 [this, self](boost::system::error_code ec, std::size_t /*length*/)
                                 {
                                     if (!ec) {
+                                        std::string client_ip = socket_.remote_endpoint().address().to_string();
                                         std::string username = read_msg_->parse_bson(read_msg_->body(),
-                                                                                       read_msg_->body_length());
+                                                                                       read_msg_->body_length(), client_ip);
                                         room_.deliver(username, read_msg_);
-                                        std::cout << socket_.remote_endpoint().address().to_string() << std::endl;
                                         do_read_header();
                                     }
                                     else
