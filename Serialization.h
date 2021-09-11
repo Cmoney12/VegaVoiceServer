@@ -7,6 +7,13 @@
 
 #include <bson.h>
 
+struct Protocol {
+    int32_t status_code;
+    char receivers_number[11];
+    char senders_number[11];
+    char data[30];
+};
+
 class Serialization {
 public:
     enum { HEADER_LENGTH = 4 };
@@ -60,19 +67,26 @@ public:
             receiver = bson_iter_utf8(&iter, nullptr);
         }
 
-        // If we receive an accept we append the ip address of the sender to data
+        // If we receive an accept we create a new bson to append the ip address of the sender to data
         // portion of the packet
         if (bson_iter_init_find(&iter, received, "Status_Code") && BSON_ITER_HOLDS_INT32(&iter)) {
             int32_t status_code = bson_iter_int32(&iter);
             if (status_code == 200 || status_code == 100) {
+                Protocol protocol{};
+
+                std::memcpy(protocol.receivers_number, receiver, std::strlen(receiver));
+                if (bson_iter_init_find(&iter, received, "Status_Code") && BSON_ITER_HOLDS_INT32(&iter)) {
+                    protocol.status_code = bson_iter_int32(&iter);
+                }
+
+                if (bson_iter_init_find(&iter, received, "Senders_Number") && BSON_ITER_HOLDS_UTF8(&iter)) {
+                    const char *deliverer = bson_iter_utf8(&iter, nullptr);
+                    std::memcpy(protocol.senders_number, deliverer, std::strlen(deliverer));
+                }
 
                 data_.release();
-                bson_append_utf8(received, "Data", -1, ip_address.c_str(), -1);
-                body_length_ = (int)received->len;
-                const uint8_t *bson = bson_destroy_with_steal(received, true, &size1);
-                data_ = std::make_unique<uint8_t[]>(body_length_ + HEADER_LENGTH);
-                encode_header();
-                std::memcpy(data_.get() + HEADER_LENGTH, bson, body_length_);
+                create_bson(protocol, ip_address.c_str());
+
                 return receiver;
 
             }
@@ -81,6 +95,30 @@ public:
         bson_destroy(received);
 
         return receiver;
+    }
+
+
+    void create_bson(const Protocol& protocol, const char* ip_address) {
+        bson_t document{};
+        bson_init(&document);
+        const uint8_t *bson{};
+
+        bson_append_int32(&document, "Status_Code", -1, protocol.status_code);
+        bson_append_utf8(&document, "Receivers_Number", -1, protocol.receivers_number, -1);
+        bson_append_utf8(&document, "Senders_Number", -1, protocol.senders_number, -1);
+        bson_append_utf8(&document, "Data", -1, ip_address, -1);
+        body_length_ = (int)document.len;
+
+        bool steal = true;
+        uint32_t size;
+
+        bson = bson_destroy_with_steal(&document, steal, &size);
+
+        body_length_ = (int)document.len;
+        data_ = std::make_unique<uint8_t[]>(body_length_ + HEADER_LENGTH);
+        encode_header();
+        std::memcpy(data_.get() + HEADER_LENGTH, bson, body_length_);
+
     }
 
     bool decode_header() {
