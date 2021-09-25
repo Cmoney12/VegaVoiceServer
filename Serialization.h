@@ -75,7 +75,6 @@ public:
             if (status_code == 200 || status_code == 100) {
                 Protocol protocol{};
 
-#include <iostream>
                 std::memcpy(protocol.receivers_number, receiver, std::strlen(receiver));
                 if (bson_iter_init_find(&iter, received, "Status_Code") && BSON_ITER_HOLDS_INT32(&iter)) {
                     protocol.status_code = bson_iter_int32(&iter);
