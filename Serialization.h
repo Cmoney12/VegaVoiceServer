@@ -12,6 +12,7 @@ struct Protocol {
     char receivers_number[11];
     char senders_number[11];
     char data[30];
+    char port[6];
 };
 
 class Serialization {
@@ -84,6 +85,11 @@ public:
                     std::memcpy(protocol.senders_number, deliverer, std::strlen(deliverer));
                 }
 
+                if (bson_iter_init_find(&iter, received, "Port") && BSON_ITER_HOLDS_UTF8(&iter)) {
+                    const char* receiver_port = bson_iter_utf8(&iter, nullptr);
+                    std::memcpy(protocol.port, receiver_port, std::strlen(receiver_port));
+                }
+
                 data_.release();
                 create_bson(protocol, ip_address.c_str());
 
@@ -101,12 +107,13 @@ public:
     void create_bson(const Protocol& protocol, const char* ip_address) {
         bson_t document{};
         bson_init(&document);
-        const uint8_t *bson{};
+        const uint8_t *bson;
 
         bson_append_int32(&document, "Status_Code", -1, protocol.status_code);
         bson_append_utf8(&document, "Receivers_Number", -1, protocol.receivers_number, -1);
         bson_append_utf8(&document, "Senders_Number", -1, protocol.senders_number, -1);
         bson_append_utf8(&document, "Data", -1, ip_address, -1);
+        bson_append_utf8(&document, "Port", -1, protocol.port, -1);
         body_length_ = (int)document.len;
 
         bool steal = true;
