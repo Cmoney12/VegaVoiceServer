@@ -79,15 +79,16 @@ class chat_session
           public std::enable_shared_from_this<chat_session>
 {
 public:
-    chat_session(tcp::socket socket, chat_room& room)
+    chat_session(tcp::socket socket, chat_room& room, boost::asio::io_context::strand& strand)
             : socket_(std::move(socket)),
-              room_(room)
+              room_(room),
+              strand_(strand)
     {
     }
 
     void start()
     {
-        read_phonenumber();
+        read_phone_number();
         do_read_header();
 
     }
@@ -102,13 +103,14 @@ public:
         }
     }
 
-    void read_phonenumber() {
-        boost::asio::async_read_until(socket_, buf, "\n", [this]
+    void read_phone_number() {
+        boost::asio::async_read_until(socket_, buf, "\n",
+                                      boost::asio::bind_executor(strand_,[this]
                 (boost::system::error_code ec, std::size_t size) {
             if(!ec) {
                 handle_username(ec, size);
             }
-        });
+        }));
     }
 
     void handle_username(boost::system::error_code, std::size_t size) {
@@ -129,7 +131,7 @@ private:
         auto self(shared_from_this());
         boost::asio::async_read(socket_,
                                 boost::asio::buffer(read_msg_->head(), Serialization::HEADER_LENGTH),
-                                [this, self](boost::system::error_code ec, std::size_t /*length*/)
+                                boost::asio::bind_executor(strand_,[this, self](boost::system::error_code ec, std::size_t /*length*/)
                                 {
                                     if (!ec && read_msg_->decode_header())
                                     {
@@ -139,7 +141,7 @@ private:
                                     {
                                         room_.leave(shared_from_this());
                                     }
-                                });
+                                }));
     }
 
     void do_read_body()
@@ -147,7 +149,7 @@ private:
         auto self(shared_from_this());
         boost::asio::async_read(socket_,
                                 boost::asio::buffer(read_msg_->body(), read_msg_->body_length()),
-                                [this, self](boost::system::error_code ec, std::size_t /*length*/)
+                                boost::asio::bind_executor(strand_,[this, self](boost::system::error_code ec, std::size_t /*length*/)
                                 {
                                     if (!ec) {
                                         // allow through network to get external ip
@@ -165,7 +167,7 @@ private:
                                     {
                                         room_.leave(shared_from_this());
                                     }
-                                });
+                                }));
     }
 
     void do_write()
@@ -174,7 +176,8 @@ private:
         boost::asio::async_write(socket_,
                                  boost::asio::buffer(write_msgs_.front()->data(),
                                                      write_msgs_.front()->length()),
-                                 [this, self](boost::system::error_code ec, std::size_t /*length*/)
+                                 boost::asio::bind_executor(strand_,
+                                                            [this, self](boost::system::error_code ec, std::size_t /*length*/)
                                  {
                                      if (!ec)
                                      {
@@ -189,7 +192,7 @@ private:
                                      {
                                          room_.leave(shared_from_this());
                                      }
-                                 });
+                                 }));
     }
 
     tcp::socket socket_;
@@ -197,6 +200,7 @@ private:
     std::shared_ptr<Serialization> read_msg_ = std::make_shared<Serialization>();
     chat_message_queue write_msgs_;
     boost::asio::streambuf buf;
+    boost::asio::io_context::strand& strand_;
 };
 
 //----------------------------------------------------------------------
@@ -204,10 +208,9 @@ private:
 class chat_server
 {
 public:
-    boost::asio::io_context& io_context_;
     chat_server(boost::asio::io_context& io_context,
-                const tcp::endpoint& endpoint)
-            : acceptor_(io_context, endpoint), io_context_(io_context)
+                const tcp::endpoint& endpoint, boost::asio::io_context::strand& strand)
+            : acceptor_(io_context, endpoint), strand_(strand)
     {
         do_accept();
     }
@@ -215,20 +218,21 @@ public:
 private:
     void do_accept()
     {
-        acceptor_.async_accept(boost::asio::make_strand(io_context_),
-                [this](boost::system::error_code ec, tcp::socket socket)
+        acceptor_.async_accept(
+                boost::asio::bind_executor(strand_, [this](boost::system::error_code ec, tcp::socket socket)
                 {
                     if (!ec)
                     {
-                        std::make_shared<chat_session>(std::move(socket), room_)->start();
+                        std::make_shared<chat_session>(std::move(socket), room_, strand_)->start();
                     }
 
                     do_accept();
-                });
+                }));
     }
 
     tcp::acceptor acceptor_;
     chat_room room_;
+    boost::asio::io_context::strand& strand_;
 };
 
 //----------------------------------------------------------------------
@@ -247,15 +251,8 @@ int main(int argc, char* argv[])
         boost::asio::io_context io_context;
         std::vector<std::thread> server_threads;
         tcp::endpoint endpoint(tcp::v4(), port);
-        std::shared_ptr<chat_server> server = std::make_shared<chat_server>(io_context, endpoint);
-
-        /**std::list<std::shared_ptr<chat_server>> servers;
-        for (int i = 1; i < thread_number; ++i)
-        {
-            tcp::endpoint endpoint(tcp::v4(), port);
-            std::shared_ptr<chat_server> server = std::make_shared<chat_server>(io_context, endpoint);
-            servers.emplace_back(server);
-        }**/
+        boost::asio::io_context::strand strand_ = boost::asio::io_service::strand(io_context);
+        std::shared_ptr<chat_server> server = std::make_shared<chat_server>(io_context, endpoint, strand_);
 
         // Run the I/O service on the requested number of threads
         boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
