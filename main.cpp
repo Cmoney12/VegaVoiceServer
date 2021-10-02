@@ -7,6 +7,7 @@
 #include <set>
 #include <utility>
 #include <boost/asio.hpp>
+#include <boost/lexical_cast.hpp>
 #include <unordered_map>
 #include "Serialization.h"
 
@@ -149,7 +150,12 @@ private:
                                 [this, self](boost::system::error_code ec, std::size_t /*length*/)
                                 {
                                     if (!ec) {
+                                        // allow through network to get external ip
                                         std::string client_ip = socket_.remote_endpoint().address().to_string();
+                                        std::string s = boost::lexical_cast<std::string>(socket_.remote_endpoint());
+                                        std::cout << s << std::endl;
+                                        //local ip
+                                        //std::string client_ip = socket_.local_endpoint().address().to_string();
                                         std::string username = read_msg_->parse_bson(read_msg_->body(),
                                                                                        read_msg_->body_length(), client_ip);
                                         room_.deliver(username, read_msg_);
@@ -198,9 +204,10 @@ private:
 class chat_server
 {
 public:
+    boost::asio::io_context& io_context_;
     chat_server(boost::asio::io_context& io_context,
                 const tcp::endpoint& endpoint)
-            : acceptor_(io_context, endpoint)
+            : acceptor_(io_context, endpoint), io_context_(io_context)
     {
         do_accept();
     }
@@ -208,7 +215,7 @@ public:
 private:
     void do_accept()
     {
-        acceptor_.async_accept(
+        acceptor_.async_accept(boost::asio::make_strand(io_context_),
                 [this](boost::system::error_code ec, tcp::socket socket)
                 {
                     if (!ec)
@@ -235,17 +242,42 @@ int main(int argc, char* argv[])
             std::cerr << "Usage: chat_server <port> [<port> ...]\n";
             return 1;
         }
-
+        int port = 1234;
+        int thread_number = 3;
         boost::asio::io_context io_context;
+        std::vector<std::thread> server_threads;
+        tcp::endpoint endpoint(tcp::v4(), port);
+        std::shared_ptr<chat_server> server = std::make_shared<chat_server>(io_context, endpoint);
 
-        std::list<chat_server> servers;
-        for (int i = 1; i < argc; ++i)
+        /**std::list<std::shared_ptr<chat_server>> servers;
+        for (int i = 1; i < thread_number; ++i)
         {
-            tcp::endpoint endpoint(tcp::v4(), std::atoi(argv[i]));
-            servers.emplace_back(io_context, endpoint);
-        }
+            tcp::endpoint endpoint(tcp::v4(), port);
+            std::shared_ptr<chat_server> server = std::make_shared<chat_server>(io_context, endpoint);
+            servers.emplace_back(server);
+        }**/
 
+        // Run the I/O service on the requested number of threads
+        boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
+        signals.async_wait(
+                [&io_context](boost::system::error_code const&, int)
+                {
+                    // Stop the io_context. This will cause run()
+                    // to return immediately, eventually destroying the
+                    // io_context and any remaining handlers in it.
+                    io_context.stop();
+                });
+
+        server_threads.reserve(thread_number);
+        for(auto i = thread_number - 1; i > 0; --i)
+            server_threads.emplace_back(
+                    [&io_context]
+                    {
+                        io_context.run();
+                    });
         io_context.run();
+        for (auto& i: server_threads)
+            i.join();
     }
     catch (std::exception& e)
     {

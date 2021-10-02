@@ -92,6 +92,7 @@ public:
 
                 data_.release();
                 create_bson(protocol, ip_address.c_str());
+                std::cout << ip_address << std::endl;
 
                 return receiver;
 
