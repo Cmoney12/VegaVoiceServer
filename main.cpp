@@ -264,7 +264,7 @@ int main(int argc, char* argv[])
                     // io_context and any remaining handlers in it.
                     io_context.stop();
                 });
-
+        // Run the I/O service on the requested number of threads
         server_threads.reserve(thread_number);
         for(auto i = thread_number - 1; i > 0; --i)
             server_threads.emplace_back(
@@ -273,6 +273,7 @@ int main(int argc, char* argv[])
                         io_context.run();
                     });
         io_context.run();
+        // Block until all the threads exit
         for (auto& i: server_threads)
             i.join();
     }
