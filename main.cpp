@@ -154,8 +154,6 @@ private:
                                     if (!ec) {
                                         // allow through network to get external ip
                                         std::string client_ip = socket_.remote_endpoint().address().to_string();
-                                        std::string s = boost::lexical_cast<std::string>(socket_.remote_endpoint());
-                                        std::cout << s << std::endl;
                                         //local ip
                                         //std::string client_ip = socket_.local_endpoint().address().to_string();
                                         std::string username = read_msg_->parse_bson(read_msg_->body(),
